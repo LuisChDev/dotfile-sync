@@ -1,54 +1,48 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 module Main where
 
 import           Prelude                       as P
 
 import           Control.Monad.Except           ( throwError )
-import           System.Environment             ( lookupEnv
-                                                )
+import           Data.Text                      ( unpack )
+import           Options.Applicative           as AP
 import           Turtle                        as TR
-import Options.Applicative as AP
+import           Types                          ( Args(..) )
 
-data Args = Args
-  { argsDotPath :: Text
-  , argsAdd     :: Bool
-  , argsDirs    :: [Text]
-  }
-
-args :: Parser Args
-args = Args
-  <$> strOption (long "dirpath" <> short 'd' <> help "The directory where you keep configuration files. Must be a git repo.")
-  <*> AP.switch (long "add" <> short 'a' <> help "sync the files to the dotfile folder instead of the other way around (default)")
-  <*> _
-
-dotPath :: Text
-dotPath = "DOTFILE_DIR"
-
-dotPath' :: String
-dotPath' = toString dotPath
 
 pathToLine :: TR.FilePath -> Line
 pathToLine = fromString . encodeString
 
-lineToPath :: Line -> TR.FilePath
-lineToPath = decodeString . show
+args :: Parser Args
+args =
+  Args
+    <$> strOption
+          (  long "dirpath"
+          <> short 'd'
+          <> help
+               "The directory where you keep configuration files. Must be a git repo."
+          )
+    <*> AP.switch
+          (  long "add"
+          <> short 'a'
+          <> help
+               "sync the files to the dotfile folder instead of the other way around (default)."
+          )
+    <*> many
+          (strOption $ long "dir" <> short 'b' <> help
+            "directories where you wish to sync dotfiles."
+          )
 
-
-main' :: ExceptT Text Shell Line
-main' = do
-  dotfilePath <- liftIO $ lookupEnv dotPath'
-  path        <- case dotfilePath of
-    Nothing    -> throwError $ "env var " <> dotPath <> " not defined."
-    Just path_ -> pure path_
-
-  let pathT  = fromString path
-      pathT' = P.toText path
+main' :: Args -> ExceptT Text Shell Line
+main' Args { argsDotPath, argsAdd, argsDirs } = do
+  let pathT  = fromString $ unpack argsDotPath
+      pathT' = P.toText argsDotPath
       lnArgs :: TR.FilePath -> Line
       lnArgs loc = pathToLine loc <> " " <> pathToLine outDir
-        where
-          -- | stripPrefix craps out if we want an absolute path
-          outDir = (decodeString . drop (length pathT') . encodeString) loc
+        where outDir = (decodeString . drop (length pathT') . encodeString) loc
+          {- stripPrefix craps out if we want an absolute path -}
 
   ifM
     (testdir pathT)
@@ -58,25 +52,46 @@ main' = do
 
   ifM
     (shellStrict ("git -C " <> pathT' <> " rev-parse") empty >>= \case
-     (ExitSuccess, _) -> pure True
-     (_, _) -> pure False
+      (ExitSuccess, _) -> pure True
+      (_          , _) -> pure False
     )
     (pure ())
-    (throwError $ "directory indicated by path " <> pathT' <> "is not a git repository.")
+    (  throwError
+    $  "directory indicated by path "
+    <> pathT'
+    <> " is not a git repository."
+    )
 
-  echo "syncing dotfiles with repo"
+  if argsAdd
+    then do
+      echo "adding dotfiles in indicated folders to repo"
+      addFolder pathT argsDirs lnArgs
+    else do
+      echo "syncing dotfiles with repo"
+      syncConfig pathT lnArgs
+
+
+syncConfig :: TR.FilePath -> (TR.FilePath -> Line) -> ExceptT Text Shell Line
+syncConfig pathT lnArgs = do
   fname <- lift $ flip TR.find pathT $ invert
     (contains ".git" <|> contains "google-chrome" <|> contains "chromium")
   True <- testfile fname
 
+  lift $ mktree $ directory fname
   lift $ flip inshell empty $ "ln " <> lineToText (lnArgs fname)
 
 
-addFolder :: ExceptT Text Shell Line
-addFolder = undefined
-
+addFolder :: TR.FilePath -> [Text] -> (TR.FilePath -> Line) -> ExceptT Text Shell Line
+addFolder pathT argsDirs lnArgs = undefined
 
 main :: IO ()
 main = do
-  echo "in progress"
-  TR.view $ runExceptT main'
+  params <- execParser $ info args fullDesc
+  (TR.view :: Shell Text -> IO ())
+    $ map
+        (\case
+          Left  t    -> t
+          Right line -> lineToText line
+        )
+    $ runExceptT
+    $ main' params
