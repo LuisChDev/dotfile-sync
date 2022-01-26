@@ -87,7 +87,7 @@ addFolder pathT argsDirs lnArgs = undefined
 main :: IO ()
 main = do
   params <- execParser $ info args fullDesc
-  (TR.view :: Shell Text -> IO ())
+  TR.view
     $ map
         (\case
           Left  t    -> t
