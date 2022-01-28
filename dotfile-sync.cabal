@@ -31,10 +31,20 @@ common deps
                         , microlens >= 0.4
                         , microlens-th
                         , text >= 1.2
-    ghc-options:          -Wall -Wno-missing-signatures
+                        , exceptions >= 0.10
+    ghc-options:          -Wall
+                          -Wcompat
+                          -Wincomplete-record-updates
+                          -Wincomplete-uni-patterns
+                          -Wredundant-constraints
+                          -Wno-missing-signatures
     default-extensions:   LambdaCase
                         , NoStarIsType
                         , OverloadedStrings
+                        , ScopedTypeVariables
+                        , TypeApplications
+                        , NamedFieldPuns
+                        , FlexibleInstances
 
 
 executable dotfile-sync
