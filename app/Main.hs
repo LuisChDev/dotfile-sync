@@ -12,6 +12,12 @@ import           Types                          ( Args(..) )
 pathToLine :: TR.FilePath -> Line
 pathToLine = fromString . encodeString
 
+-- | takes the path as given in the folder and returns its location in
+--   the filesystem
+-- we can't simply use stripPrefix as that does't work with absolute paths
+sysLoc :: Text -> TR.FilePath -> TR.FilePath
+sysLoc path = decodeString . drop (length path) . encodeString
+
 args :: Parser Args
 args =
   Args
@@ -32,54 +38,73 @@ args =
             "directories where you wish to sync dotfiles."
           )
 
+
+-- | does most of the initial validation before dropping into the other routines.
 main' :: Args -> ExceptT Text Shell Line
 main' Args { argsDotPath, argsAdd, argsDirs } = do
-  let pathT  = fromString $ unpack argsDotPath
-      pathT' = P.toText argsDotPath
-      lnArgs :: TR.FilePath -> Line
-      lnArgs loc = pathToLine loc <> " " <> pathToLine outDir
-        where outDir = (decodeString . drop (length pathT') . encodeString) loc
-          {- stripPrefix craps out if we want an absolute path -}
+  let pathT   = fromText argsDotPath
+      sysLoc' = sysLoc argsDotPath
 
   ifM
     (testdir pathT)
     (pure ())
-    (throwError $ "directory indicated by path " <> pathT' <> " does not exist."
+    (  throwError
+    $  "directory indicated by path "
+    <> argsDotPath
+    <> " does not exist."
     )
 
   ifM
-    (shellStrict ("git -C " <> pathT' <> " rev-parse") empty >>= \case
+    (shellStrict ("git -C " <> argsDotPath <> " rev-parse") empty >>= \case
       (ExitSuccess, _) -> pure True
       (_          , _) -> pure False
     )
     (pure ())
     (  throwError
     $  "directory indicated by path "
-    <> pathT'
+    <> argsDotPath
     <> " is not a git repository."
     )
 
   if argsAdd
     then do
       echo "adding dotfiles in indicated folders to repo"
-      addFolder pathT argsDirs lnArgs
+      addFolder pathT argsDirs sysLoc'
     else do
       echo "syncing dotfiles with repo"
-      syncConfig pathT lnArgs
+      syncConfig pathT sysLoc'
 
 
-syncConfig :: TR.FilePath -> (TR.FilePath -> Line) -> ExceptT Text Shell Line
-syncConfig pathT lnArgs = do
+syncConfig
+  :: TR.FilePath -> (TR.FilePath -> TR.FilePath) -> ExceptT Text Shell Line
+syncConfig pathT pathF = do
   fname <- lift $ flip TR.find pathT $ invert
     (contains ".git" <|> contains "google-chrome" <|> contains "chromium")
   True <- testfile fname
 
   lift $ mktree $ directory fname
-  lift $ flip inshell empty $ "ln " <> lineToText (lnArgs fname)
+  catch
+    (lift $ flip inshell empty $ "ln " <> foldl'
+      -- TODO toText can either return the exact path or an approximation.
+      -- for now this gets ignored, but eventually we should send the user a warning
+      -- or something idk
+      (\t fl -> t <> either id id (TR.toText fl))
+      ""
+      [fname, " ", pathF fname]
+    )
+    (\(a :: ExitCode) -> do
+      echo $ "Exception when running the program: " <> fromString (show a)
+      throwError
+        "There was a problem linking the dotfiles. please check errors above."
+    )
 
 
-addFolder :: TR.FilePath -> [Text] -> (TR.FilePath -> Line) -> ExceptT Text Shell Line
-addFolder pathT argsDirs lnArgs = undefined
+addFolder
+  :: TR.FilePath
+  -> [Text]
+  -> (TR.FilePath -> TR.FilePath)
+  -> ExceptT Text Shell Line
+addFolder pathT argsDirs sysLoc = undefined
 
 main :: IO ()
 main = do
