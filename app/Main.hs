@@ -3,10 +3,15 @@ module Main where
 import           Prelude                       as P
 
 import           Control.Monad.Except           ( throwError )
-import           Data.Text                      ( unpack )
+import qualified Data.Text                     as T
 import           Options.Applicative           as AP
+import           Parse                          ( parseInotify )
 import           Turtle                        as TR
-import           Types                          ( Args(..) )
+import           Types                          ( Args(..)
+                                                , INotify(..)
+                                                , ShellE
+                                                )
+
 
 
 pathToLine :: TR.FilePath -> Line
@@ -15,8 +20,8 @@ pathToLine = fromString . encodeString
 -- | takes the path as given in the folder and returns its location in
 --   the filesystem
 -- we can't simply use stripPrefix as that does't work with absolute paths
-sysLoc :: Text -> TR.FilePath -> TR.FilePath
-sysLoc path = decodeString . drop (length path) . encodeString
+prependLocation' :: Text -> TR.FilePath -> TR.FilePath
+prependLocation' path = decodeString . (<>) (T.unpack path) . encodeString
 
 args :: Parser Args
 args =
@@ -40,13 +45,13 @@ args =
 
 
 -- | does most of the initial validation before dropping into the other routines.
-main' :: Args -> ExceptT Text Shell Line
+main' :: Args -> ShellE Line
 main' Args { argsDotPath, argsAdd, argsDirs } = do
-  let pathT   = fromText argsDotPath
-      sysLoc' = sysLoc argsDotPath
+  let dotfilesDir     = fromText argsDotPath
+      prependLocation = prependLocation' argsDotPath
 
   ifM
-    (testdir pathT)
+    (testdir dotfilesDir)
     (pure ())
     (  throwError
     $  "directory indicated by path "
@@ -69,47 +74,68 @@ main' Args { argsDotPath, argsAdd, argsDirs } = do
   if argsAdd
     then do
       echo "adding dotfiles in indicated folders to repo"
-      addFolder pathT argsDirs sysLoc'
+      addFolder dotfilesDir argsDirs prependLocation
     else do
       echo "syncing dotfiles with repo"
-      syncConfig pathT sysLoc'
+      watchConfig dotfilesDir prependLocation
+      -- syncConfig pathT prependLocation
 
 
-syncConfig
-  :: TR.FilePath -> (TR.FilePath -> TR.FilePath) -> ExceptT Text Shell Line
-syncConfig pathT pathF = do
-  fname <- lift $ flip TR.find pathT $ invert
+syncFile fileSynced prependLocation = catch
+  (lift $ flip inshell empty $ "ln " <> foldl'
+    -- TODO toText can either return the exact path or an approximation.
+    -- for now this gets ignored, but eventually we should send the user a warning
+    -- or something idk
+    (\t fl -> t <> either id id (TR.toText fl))
+    ""
+    [prependLocation fileSynced, " ", fileSynced]
+  )
+  (\(a :: ExitCode) -> do
+    echo $ "Exception when running the program: " <> fromString (show a)
+    throwError
+      "There was a problem linking the dotfiles. please check errors above."
+  )
+
+
+syncConfig :: TR.FilePath -> (TR.FilePath -> TR.FilePath) -> ShellE Line
+syncConfig dotfilesDir prependLocation = do
+  fname <- lift $ flip TR.find dotfilesDir $ invert
     (contains ".git" <|> contains "google-chrome" <|> contains "chromium")
   True <- testfile fname
 
-  lift $ mktree $ directory fname
-  catch
-    (lift $ flip inshell empty $ "ln " <> foldl'
-      -- TODO toText can either return the exact path or an approximation.
-      -- for now this gets ignored, but eventually we should send the user a warning
-      -- or something idk
-      (\t fl -> t <> either id id (TR.toText fl))
-      ""
-      [fname, " ", pathF fname]
-    )
-    (\(a :: ExitCode) -> do
-      echo $ "Exception when running the program: " <> fromString (show a)
-      throwError
-        "There was a problem linking the dotfiles. please check errors above."
-    )
+  mktree $ directory fname
+  syncFile fname prependLocation
+
+watchConfig :: TR.FilePath -> (TR.FilePath -> TR.FilePath) -> ShellE Line
+watchConfig dotfilesDir prependLocation = do
+  cd dotfilesDir
+  echo =<< map pathToLine pwd
+  event <- lift $ inshell "inotifywait -rm -e create,delete ." empty
+  echo event
+
+  case parseInotify $ lineToText event of
+    Create path -> do
+      echo "linking file to location in the filesystem"
+      syncFile path prependLocation
+    Delete path -> do
+      echo "removing file"
+      rm path
+      pure "that's all folks"
 
 
 addFolder
-  :: TR.FilePath
-  -> [Text]
-  -> (TR.FilePath -> TR.FilePath)
-  -> ExceptT Text Shell Line
-addFolder pathT argsDirs sysLoc = undefined
+  :: TR.FilePath -> [Text] -> (TR.FilePath -> TR.FilePath) -> ShellE Line
+addFolder pathT argsDirs prependLocation = do
+  echo "adding folders"
+  forM_ argsDirs $ \dir -> do
+    echo $ "adding folder" <> unsafeTextToLine dir -- filenames don't contain newlines
+  pure $ unsafeTextToLine "heh"
+
 
 main :: IO ()
 main = do
-  params <- execParser $ info args fullDesc
-  TR.view
+  params <- execParser $ info (args <**> helper) fullDesc
+  TR.sh
     $ map
         (\case
           Left  t    -> t
