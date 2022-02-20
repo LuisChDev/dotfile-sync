@@ -62,5 +62,6 @@ executable dotfile-sync
 
 test-suite dotfile-sync-test
     import:               deps
+    hs-source-dirs:       test
     main-is:              Test.hs
     type:                 exitcode-stdio-1.0

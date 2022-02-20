@@ -39,7 +39,7 @@ args =
                "sync the files to the dotfile folder instead of the other way around (default)."
           )
     <*> many
-          (strOption $ long "dir" <> short 'b' <> help
+          (strOption $ long "adddir" <> short 'D' <> help
             "directories where you wish to sync dotfiles."
           )
 
@@ -128,7 +128,7 @@ addFolder
 addFolder pathT argsDirs prependLocation = do
   echo "adding folders"
   forM_ argsDirs $ \dir -> do
-    echo $ "adding folder" <> unsafeTextToLine dir -- filenames don't contain newlines
+    echo $ "adding folder " <> unsafeTextToLine dir -- filenames don't contain newlines
   pure $ unsafeTextToLine "heh"
 
 

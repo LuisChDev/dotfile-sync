@@ -1,38 +1,34 @@
 {
-  description = "Tool for dotfile syncing";
-  inputs.nixpkgs.url = "nixpkgs";
-  outputs = { self, nixpkgs }:
-    let
-      supportedSystems = [ "x86_64-linux" ];
-      forAllSystems = f:
-        nixpkgs.lib.getAttrs supportedSystems (system: f system);
-      nixpkgsFor = forAllSystems (system:
-        import nixpkgs {
-          inherit system;
-          overlays = [ self.overlay ];
-        });
-    in {
-      overlay = (final: prev: {
-        dotfile-sync =
-          final.haskellPackages.callCabal2nix "dotfile-sync" ./. { };
-      });
-      packages = forAllSystems
-        (system: { dotfile-sync = nixpkgsFor.${system}.dotfile-sync; });
-      defaultPackage =
-        forAllSystems (system: self.packages.${system}.dotfile-sync);
-      checks = self.packages;
-      devShell = forAllSystems (system:
-        let haskellPackages = nixpkgsFor.${system}.haskellPackages;
-        in haskellPackages.shellFor {
-          packages = p: [ self.packages.${system}.dotfile-sync ];
-          withHoogle = true;
+  description = "sync dotfiles with your device";
+
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs?rev=46821ea01c8f54d2a20f5a503809abfc605269d7";
+    flake-utils.url = "github:numtide/flake-utils";
+  };
+
+  outputs = { self, nixpkgs, flake-utils }:
+    flake-utils.lib.eachSystem [ "x86_64-linux" ] (system:
+      let
+        pkgs = nixpkgs.legacyPackages.${system};
+        haskellPackages = pkgs.haskellPackages;
+        jailBreakUnbreak = pkg:
+          pkgs.haskell.lib.doJailbreak (pkgs: pkg.overrideAttrs (_: { meta = { }; }));
+        packageName = "dotfile-sync";
+
+      in
+      {
+        packages.${packageName} = haskellPackages.callCabal2nix packageName self { };
+        defaultPackage = self.packages.${system}.${packageName};
+
+        devShell = pkgs.mkShell {
           buildInputs = with haskellPackages; [
             haskell-language-server
             ghcid
             cabal-install
           ];
-          # Change the prompt to show that you are in a devShell
+          inputsFrom = builtins.attrValues self.packages.${system};
           shellHook = "export PS1='\\e[1;34mdev > \\e[0m'";
-        });
-    };
+        };
+      }
+    );
 }
