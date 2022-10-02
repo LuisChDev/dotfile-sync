@@ -1,5 +1,6 @@
 {
   description = "sync dotfiles with your device";
+  nixConfig.bash-prompt = "\\e[1;34m\n\[dotfile-sync@\$HOSTNAME:\$PWD\]$ \\e[0m";
 
   inputs = {
     nixpkgs.url =

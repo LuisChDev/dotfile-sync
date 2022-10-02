@@ -27,3 +27,4 @@ cabal.project.local~
 .gc-roots/
 *.pdf
 .dir-locals.el
+.direnv
